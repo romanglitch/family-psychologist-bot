@@ -1,0 +1,18 @@
+services:
+  psychologist:
+    build: .
+    container_name: psych-bot-psychologist
+    restart: unless-stopped
+    env_file: .env
+    command: node psychologist.js
+    # volumes:
+    #   - ./logs/psychologist:/app/logs
+
+  sexologist:
+    build: .
+    container_name: psych-bot-sexologist
+    restart: unless-stopped
+    env_file: .env
+    command: node sexologist.js
+    # volumes:
+    #   - ./logs/sexologist:/app/logs
