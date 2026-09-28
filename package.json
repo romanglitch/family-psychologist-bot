@@ -4,9 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "psychologist": "node psychologist.js",
-    "sexologist": "node sexologist.js",
-    "start": "npm run psychologist & npm run sexologist",
+    "psy": "node psychologist.js",
+    "sex": "node sexologist.js",
     "openterm": "bash -c \"set -a; source ./.env; set +a; open-terminal run --host \\\"$OT_HOST\\\" --port \\\"$OT_PORT\\\" --api-key \\\"$OT_API_KEY\\\"\""
   },
   "keywords": [],

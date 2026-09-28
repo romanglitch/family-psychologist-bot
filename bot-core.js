@@ -19,19 +19,48 @@ class PsychBot {
         this.mentionRegex = new RegExp(`@${safeUsername}`, 'gi');
         this.checkMentionRegex = new RegExp(`@${safeUsername}`, 'i');
 
-        this.systemPrompt = this._buildSystemPrompt();
+        // Динамический флаг режима
+        this.respondToAllInGroup = config.respondToAllInGroup || false;
+
+        // НОВОЕ: Персональная команда для этого бота (например, 'psy_respond' или 'sex_respond')
+        // Позволяет управлять ботами независимо в одном чате
+        this.adminCommand = config.adminCommand || 'respond_all';
+
+        this.systemPromptGroup = this._buildSystemPrompt('group');
+        this.systemPromptPrivate = this._buildSystemPrompt('private');
+
         this._setupHandlers();
     }
 
-    _buildSystemPrompt() {
-        return `ТЫ — «${this.config.roleName}», эмпатичный ИИ-ассистент в Telegram-группе Алёны и Ромы.
-            ТВОЯ РОЛЬ: ${this.config.roleDescription}
-            ПРИНЦИПЫ: Нейтральность, безопасность, конфиденциальность.
-            ФОРМАТ: Кратко (до 4 предложений), тёплый профессиональный тон, без канцеляризмов. Обращайся по именам.
+    _buildSystemPrompt(chatType) {
+        const baseIdentity = `ТЫ — «${this.config.roleName}», эмпатичный ИИ-ассистент.`;
+        const role = `ТВОЯ РОЛЬ: ${this.config.roleDescription}`;
+        const principles = `ПРИНЦИПЫ: Нейтральность, безопасность, конфиденциальность.`;
+        const format = `ФОРМАТ: Кратко (до 4 предложений), тёплый профессиональный тон, без канцеляризмов. Обращайся по именам.`;
+
+        if (chatType === 'private') {
+            return `${baseIdentity}
+                ${role}
+                КОНТЕКСТ: Ты общаешься лично с пользователем один на один.
+                ${principles}
+                ${format}
+                ПРАВИЛА: 
+                1. Отвечай на каждое сообщение пользователя.
+                2. Фокусируйся на личной поддержке, эмпатии и индивидуальных техниках.
+                3. Не ставь диагнозы. При серьезных проблемах — рекомендуй очного специалиста.
+                4. Используй эмодзи умеренно.`;
+        }
+
+        // Групповой промпт (оригинальная логика, но чище)
+        return `${baseIdentity}
+            ${role}
+            КОНТЕКСТ: Ты находишься в Telegram-группе Алёны и Ромы.
+            ${principles}
+            ${format}
             ПРАВИЛА: 
-            1. Отвечай ТОЛЬКО при упоминании @${this.config.botUsername} или ответе на твоё сообщение.
+            1. ${this.respondToAllInGroup ? 'Отвечай на все сообщения в чате, анализируя общий контекст.' : 'Отвечай ТОЛЬКО при упоминании @' + this.config.botUsername + ' или ответе на твоё сообщение.'}
             2. Не ставь диагнозы и не назначай лечение. При выходе за рамки — перенаправляй к живому специалисту.
-            3. Проактивно предлагай конкретные техники коммуникации.
+            3. Проактивно предлагай конкретные техники коммуникации для пары.
             4. Используй эмодзи умеренно.`;
     }
 
@@ -47,10 +76,12 @@ class PsychBot {
         if (history.length > limit) history.splice(0, history.length - limit);
     }
 
-    async _queryOpenWebUI(chatId, userMessage) {
+    async _queryOpenWebUI(chatId, userMessage, isPrivate) {
         const history = this._getHistory(chatId);
+        const systemPrompt = isPrivate ? this.systemPromptPrivate : this.systemPromptGroup;
+
         const messages = [
-            { role: 'system', content: this.systemPrompt },
+            { role: 'system', content: systemPrompt },
             ...history,
             { role: 'user', content: userMessage },
         ];
@@ -83,16 +114,28 @@ class PsychBot {
     _shouldRespond(ctx) {
         const msg = ctx.message;
         if (!msg?.text) return false;
+
+        // Игнорируем других ботов
+        if (ctx.from?.is_bot) return false;
+
+        if (ctx.chat.type === 'private') return true;
+
+        // Режим "все сообщения"
+        if (this.respondToAllInGroup) return true;
+
+        // Стандартный режим
         if (msg.reply_to_message?.from?.username === this.config.botUsername) return true;
         return this.checkMentionRegex.test(msg.text);
     }
 
     _setupHandlers() {
         this.bot.start((ctx) => {
-            ctx.reply(
-                `Привет! 👋 Я ${this.config.roleName.toLowerCase()}.\n\nУпомяни меня или ответь на моё сообщение, чтобы я подключился.`,
-                Markup.inlineKeyboard([[{ text: '📖 Как я работаю', callback_data: 'how_it_works' }]])
-            );
+            const isPrivate = ctx.chat.type === 'private';
+            const text = isPrivate
+                ? `Привет! 👋 Я ${this.config.roleName.toLowerCase()}.\n\nПиши мне свои вопросы, я здесь, чтобы поддержать тебя.`
+                : `Привет! 👋 Я ${this.config.roleName.toLowerCase()}.\n\nУпомяни меня или ответь на моё сообщение, чтобы я подключился.`;
+
+            ctx.reply(text, Markup.inlineKeyboard([[{ text: '📖 Как я работаю', callback_data: 'how_it_works' }]]));
         });
 
         this.bot.action('how_it_works', (ctx) => {
@@ -100,20 +143,97 @@ class PsychBot {
             ctx.reply(this.config.howItWorksText);
         });
 
-        this.bot.on('text', async (ctx) => {
-            // Дебаг-лог для диагностики — убери когда всё заработает
-            console.log(`[${this.config.roleName}] text: "${ctx.message.text?.slice(0, 40)}" | shouldRespond: ${this._shouldRespond(ctx)}`);
+        // НОВАЯ ЛОГИКА: Регистрируем персональную команду
+        // Используем this.adminCommand вместо жесткого 'respond_all'
+        this.bot.command(this.adminCommand, async (ctx) => {
+            // Вспомогательная функция для безопасной отправки ответов
+            const safeReply = async (text, extra = {}) => {
+                try {
+                    await ctx.reply(text, {
+                        reply_to_message_id: ctx.message.message_id,
+                        ...extra
+                    });
+                } catch (err) {
+                    if (err.description?.includes('message to be replied not found')) {
+                        // Fallback: отправляем без привязки к сообщению
+                        await ctx.reply(text, extra);
+                    } else {
+                        console.error(`[${this.config.roleName}] Reply error:`, err.message);
+                    }
+                }
+            };
 
+            // Проверка прав администратора
+            try {
+                const chatMember = await ctx.getChatMember(ctx.from.id);
+                if (chatMember.status !== 'administrator' && chatMember.status !== 'creator') {
+                    return safeReply('⛔ Эта команда доступна только администраторам.');
+                }
+            } catch (e) {
+                return safeReply('⚠️ Не удалось проверить права администратора.');
+            }
+
+            const arg = ctx.message.text.split(' ')[1]?.toLowerCase();
+            const botName = this.config.roleName;
+
+            if (arg === 'on') {
+                this.respondToAllInGroup = true;
+                this.systemPromptGroup = this._buildSystemPrompt('group');
+                return safeReply(
+                    `✅ <b>${botName}</b>: Режим реагирования на ВСЕ сообщения ВКЛЮЧЕН.`,
+                    { parse_mode: 'HTML' }
+                );
+            }
+            else if (arg === 'off') {
+                this.respondToAllInGroup = false;
+                this.systemPromptGroup = this._buildSystemPrompt('group');
+                return safeReply(
+                    `✅ <b>${botName}</b>: Режим реагирования на ВСЕ сообщения ВЫКЛЮЧЕН.`,
+                    { parse_mode: 'HTML' }
+                );
+            }
+            else {
+                const status = this.respondToAllInGroup ? 'ВКЛ 🟢' : 'ВЫКЛ 🔴';
+                return safeReply(
+                    `⚙️ <b>${botName}</b> | Статус: ${status}\n\n` +
+                    `/<code>${this.adminCommand} on</code> — включить\n` +
+                    `/<code>${this.adminCommand} off</code> — выключить`,
+                    { parse_mode: 'HTML' }
+                );
+            }
+        });
+
+        this.bot.on('text', async (ctx) => {
             if (!this._shouldRespond(ctx)) return;
 
+            const isPrivate = ctx.chat.type === 'private';
             const senderName = getSenderName(ctx);
-            const cleanText = ctx.message.text.replace(this.mentionRegex, '').trim();
+
+            let cleanText = ctx.message.text;
+            if (!isPrivate) {
+                cleanText = cleanText.replace(this.mentionRegex, '').trim();
+            } else {
+                cleanText = cleanText.trim();
+            }
 
             if (!cleanText) return ctx.reply('Напиши мне свой вопрос или опиши ситуацию 😊');
 
             await ctx.sendChatAction('typing');
-            const reply = await this._queryOpenWebUI(ctx.chat.id, `${senderName}: ${cleanText}`);
-            ctx.reply(reply, { reply_to_message_id: ctx.message.message_id });
+
+            const llmMessage = isPrivate ? cleanText : `${senderName}: ${cleanText}`;
+            const reply = await this._queryOpenWebUI(ctx.chat.id, llmMessage, isPrivate);
+
+            // ИСПРАВЛЕНИЕ: Безопасная отправка с fallback
+            try {
+                await ctx.reply(reply, { reply_to_message_id: ctx.message.message_id });
+            } catch (err) {
+                // Если исходное сообщение удалено или недоступно, отвечаем просто в чат
+                if (err.description?.includes('message to be replied not found')) {
+                    await ctx.reply(reply);
+                } else {
+                    throw err; // Пробрасываем другие ошибки дальше
+                }
+            }
         });
 
         this.bot.catch((err, ctx) => {
@@ -124,7 +244,7 @@ class PsychBot {
 
     launch() {
         return this.bot.launch().then(() => {
-            console.log(`✅ ${this.config.roleName} запущен | @${this.config.botUsername}`);
+            console.log(`✅ ${this.config.roleName} запущен | @${this.config.botUsername} | Mode: ${this.respondToAllInGroup ? 'ALL_MESSAGES' : 'MENTIONS_ONLY'}`);
         });
     }
 

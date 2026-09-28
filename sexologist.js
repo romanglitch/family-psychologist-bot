@@ -13,6 +13,8 @@ const bot = new PsychBot({
         modelId: process.env.SEXOLOGIST_MODEL_ID || process.env.OPENWEBUI_MODEL_ID,
     },
     maxHistory: parseInt(process.env.MAX_HISTORY_MESSAGES || '20', 10),
+    respondToAllInGroup: process.env.SEXOLOGIST_RESPOND_ALL === 'true',
+    adminCommand: 'sex_respond',
 });
 
 bot.launch().catch(console.error);
