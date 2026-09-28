@@ -146,7 +146,6 @@ class PsychBot {
         // НОВАЯ ЛОГИКА: Регистрируем персональную команду
         // Используем this.adminCommand вместо жесткого 'respond_all'
         this.bot.command(this.adminCommand, async (ctx) => {
-            // Вспомогательная функция для безопасной отправки ответов
             const safeReply = async (text, extra = {}) => {
                 try {
                     await ctx.reply(text, {
@@ -155,7 +154,6 @@ class PsychBot {
                     });
                 } catch (err) {
                     if (err.description?.includes('message to be replied not found')) {
-                        // Fallback: отправляем без привязки к сообщению
                         await ctx.reply(text, extra);
                     } else {
                         console.error(`[${this.config.roleName}] Reply error:`, err.message);
@@ -173,34 +171,21 @@ class PsychBot {
                 return safeReply('⚠️ Не удалось проверить права администратора.');
             }
 
-            const arg = ctx.message.text.split(' ')[1]?.toLowerCase();
-            const botName = this.config.roleName;
+            // Toggle логика: переключаем состояние
+            this.respondToAllInGroup = !this.respondToAllInGroup;
 
-            if (arg === 'on') {
-                this.respondToAllInGroup = true;
-                this.systemPromptGroup = this._buildSystemPrompt('group');
-                return safeReply(
-                    `✅ <b>${botName}</b>: Режим реагирования на ВСЕ сообщения ВКЛЮЧЕН.`,
-                    { parse_mode: 'HTML' }
-                );
-            }
-            else if (arg === 'off') {
-                this.respondToAllInGroup = false;
-                this.systemPromptGroup = this._buildSystemPrompt('group');
-                return safeReply(
-                    `✅ <b>${botName}</b>: Режим реагирования на ВСЕ сообщения ВЫКЛЮЧЕН.`,
-                    { parse_mode: 'HTML' }
-                );
-            }
-            else {
-                const status = this.respondToAllInGroup ? 'ВКЛ 🟢' : 'ВЫКЛ 🔴';
-                return safeReply(
-                    `⚙️ <b>${botName}</b> | Статус: ${status}\n\n` +
-                    `/<code>${this.adminCommand} on</code> — включить\n` +
-                    `/<code>${this.adminCommand} off</code> — выключить`,
-                    { parse_mode: 'HTML' }
-                );
-            }
+            // Пересобираем системный промпт с новым состоянием
+            this.systemPromptGroup = this._buildSystemPrompt('group');
+
+            const statusText = this.respondToAllInGroup ? 'ВКЛЮЧЕН ✅' : 'ВЫКЛЮЧЕН ❌';
+            const modeDesc = this.respondToAllInGroup
+                ? 'Бот отвечает на ВСЕ сообщения'
+                : 'Бот отвечает только на УПОМИНАНИЯ';
+
+            return safeReply(
+                `<b>${this.config.roleName}</b>: Режим реагирования ${statusText}\n\n${modeDesc}`,
+                { parse_mode: 'HTML' }
+            );
         });
 
         this.bot.on('text', async (ctx) => {

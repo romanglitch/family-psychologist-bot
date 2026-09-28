@@ -14,7 +14,7 @@ const bot = new PsychBot({
     },
     maxHistory: parseInt(process.env.MAX_HISTORY_MESSAGES || '20', 10),
     respondToAllInGroup: process.env.SEXOLOGIST_RESPOND_ALL === 'true',
-    adminCommand: 'sex_respond',
+    adminCommand: 'sex',
 });
 
 bot.launch().catch(console.error);
