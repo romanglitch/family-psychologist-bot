@@ -1,1 +1,0 @@
-# family-psychologist-bot

@@ -14,6 +14,9 @@ const bot = new PsychBot({
     },
     maxHistory: parseInt(process.env.MAX_HISTORY_MESSAGES || '20', 10),
     respondToAllInGroup: process.env.SEXOLOGIST_RESPOND_ALL === 'true',
+    allowedUserIds: process.env.SEXOLOGIST_ALLOWED_USERS
+        ? process.env.SEXOLOGIST_ALLOWED_USERS.split(',').map(s => s.trim()).filter(Boolean)
+        : [],
     adminCommand: 'sex',
 });
 
