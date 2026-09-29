@@ -18,6 +18,11 @@ const bot = new PsychBot({
         ? process.env.PSYCHOLOGIST_ALLOWED_USERS.split(',').map(s => s.trim()).filter(Boolean)
         : [],
     adminCommand: 'psy',
+    // Новые параметры
+    memoryFile: 'psy_memories.json',
+    clearCommand: 'psy_clear',
+    saveCommand: 'psy_save',
+    historyCommand: 'psy_history',
 });
 
 bot.launch().catch(console.error);

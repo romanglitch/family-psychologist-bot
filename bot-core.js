@@ -1,5 +1,7 @@
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
+const fs = require('fs/promises');
+const path = require('path');
 
 function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -14,6 +16,16 @@ class PsychBot {
         this.config = config;
         this.bot = new Telegraf(config.telegramToken);
         this.chatHistories = new Map();
+
+        // Настройки памяти и команд
+        this.memoryFile = config.memoryFile || null;
+        this.memories = [];
+        this.clearCommand = config.clearCommand || 'clear';
+        this.saveCommand = config.saveCommand || 'save';
+        this.historyCommand = config.historyCommand || 'history';
+
+        // В Docker данные лежат в /app/data, локально — в ./data
+        this.dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 
         // Парсинг белого списка из строки "123,456,789" в Set чисел
         this.allowedUserIds = null;
@@ -32,10 +44,38 @@ class PsychBot {
         // Позволяет управлять ботами независимо в одном чате
         this.adminCommand = config.adminCommand || 'respond_all';
 
-        this.systemPromptGroup = this._buildSystemPrompt('group');
-        this.systemPromptPrivate = this._buildSystemPrompt('private');
+        // Инициализация памяти и системных промптов
+        this._initMemory().then(() => {
+            this.systemPromptGroup = this._buildSystemPrompt('group');
+            this.systemPromptPrivate = this._buildSystemPrompt('private');
+        });
 
         this._setupHandlers();
+    }
+
+    async _initMemory() {
+        if (!this.memoryFile) return;
+        const filePath = path.join(this.dataDir, this.memoryFile);
+        try {
+            await fs.mkdir(this.dataDir, { recursive: true });
+            const data = await fs.readFile(filePath, 'utf-8');
+            this.memories = JSON.parse(data);
+            console.log(`✅ [${this.config.roleName}] Loaded ${this.memories.length} memories from ${filePath}`);
+        } catch (err) {
+            if (err.code !== 'ENOENT') console.error(`⚠️ Memory read error:`, err.message);
+            this.memories = [];
+        }
+    }
+
+    async _saveMemoryToFile() {
+        if (!this.memoryFile) return;
+        const filePath = path.join(this.dataDir, this.memoryFile);
+        try {
+            await fs.mkdir(this.dataDir, { recursive: true });
+            await fs.writeFile(filePath, JSON.stringify(this.memories, null, 2), 'utf-8');
+        } catch (err) {
+            console.error(`❌ Memory write error:`, err.message);
+        }
     }
 
     _buildSystemPrompt(chatType) {
@@ -44,10 +84,17 @@ class PsychBot {
         const principles = `ПРИНЦИПЫ: Нейтральность, безопасность, конфиденциальность.`;
         const format = `ФОРМАТ: Кратко (до 4 предложений), тёплый профессиональный тон, без канцеляризмов. Обращайся по именам.`;
 
+        // Добавляем блок памяти в системный промпт
+        let memoryBlock = '';
+        if (this.memories && this.memories.length > 0) {
+            const formatted = this.memories.map((m, i) => `${i + 1}. ${m}`).join('\n');
+            memoryBlock = `\n\nВАЖНОЕ О ПОЛЬЗОВАТЕЛЯХ (ПАМЯТЬ):\n${formatted}\nИспользуй эту информацию для персонализации ответов.`;
+        }
+
         if (chatType === 'private') {
             return `${baseIdentity}
                 ${role}
-                КОНТЕКСТ: Ты общаешься лично с пользователем один на один.
+                КОНТЕКСТ: Ты общаешься лично с пользователем один на один.${memoryBlock}
                 ${principles}
                 ${format}
                 ПРАВИЛА: 
@@ -57,10 +104,9 @@ class PsychBot {
                 4. Используй эмодзи умеренно.`;
         }
 
-        // Групповой промпт (оригинальная логика, но чище)
         return `${baseIdentity}
             ${role}
-            КОНТЕКСТ: Ты находишься в Telegram-группе Алёны и Ромы.
+            КОНТЕКСТ: Ты находишься в Telegram-группе Алёны и Ромы.${memoryBlock}
             ${principles}
             ${format}
             ПРАВИЛА: 
@@ -203,8 +249,7 @@ class PsychBot {
             ctx.reply(this.config.howItWorksText);
         });
 
-        // НОВАЯ ЛОГИКА: Регистрируем персональную команду
-        // Используем this.adminCommand вместо жесткого 'respond_all'
+        // Команда переключения режима реагирования
         this.bot.command(this.adminCommand, async (ctx) => {
             const safeReply = async (text, extra = {}) => {
                 try {
@@ -246,6 +291,54 @@ class PsychBot {
                 `<b>${this.config.roleName}</b>: Режим реагирования ${statusText}\n\n${modeDesc}`,
                 { parse_mode: 'HTML' }
             );
+        });
+
+        // === НОВАЯ КОМАНДА: ОЧИСТКА ИСТОРИИ ===
+        this.bot.command(this.clearCommand, async (ctx) => {
+            const chatId = ctx.chat.id;
+            this.chatHistories.delete(chatId);
+            await ctx.reply('🧹 История диалога и контекст очищены для этого чата.', {
+                reply_to_message_id: ctx.message.message_id
+            });
+        });
+
+        // === НОВАЯ КОМАНДА: СОХРАНЕНИЕ ВОСПОМИНАНИЙ ===
+        this.bot.command(this.saveCommand, async (ctx) => {
+            const text = ctx.message.text.replace(new RegExp(`^/${this.saveCommand}(\\@${this.config.botUsername})?`, 'i'), '').trim();
+
+            if (!text) {
+                return ctx.reply('⚠️ Использование: /' + this.saveCommand + ' "Описание факта о пользователе"', {
+                    reply_to_message_id: ctx.message.message_id
+                });
+            }
+
+            this.memories.push(text);
+            await this._saveMemoryToFile();
+
+            // Пересобираем промпты с новой памятью
+            this.systemPromptGroup = this._buildSystemPrompt('group');
+            this.systemPromptPrivate = this._buildSystemPrompt('private');
+
+            await ctx.reply(`💾 Воспоминание сохранено!\n\n«${text}»`, {
+                reply_to_message_id: ctx.message.message_id
+            });
+        });
+
+        // === НОВАЯ КОМАНДА: НАСТРОЙКА ГЛУБИНЫ ИСТОРИИ ===
+        this.bot.command(this.historyCommand, async (ctx) => {
+            const args = ctx.message.text.split(' ')[1];
+            const num = parseInt(args, 10);
+
+            if (!num || num < 1 || num > 200) {
+                return ctx.reply(`⚠️ Текущий лимит: ${this.config.maxHistory} сообщений.\n\nИспользование: /${this.historyCommand} <число от 1 до 200>`, {
+                    reply_to_message_id: ctx.message.message_id
+                });
+            }
+
+            this.config.maxHistory = num;
+            await ctx.reply(`✅ Глубина истории обновлена: теперь хранится последние ${num} пар сообщений.`, {
+                reply_to_message_id: ctx.message.message_id
+            });
         });
 
         // === ГОЛОСОВЫЕ СООБЩЕНИЯ ===

@@ -18,6 +18,11 @@ const bot = new PsychBot({
         ? process.env.SEXOLOGIST_ALLOWED_USERS.split(',').map(s => s.trim()).filter(Boolean)
         : [],
     adminCommand: 'sex',
+    // Новые параметры
+    memoryFile: 'sex_memories.json',
+    clearCommand: 'sex_clear',
+    saveCommand: 'sex_save',
+    historyCommand: 'sex_history',
 });
 
 bot.launch().catch(console.error);

@@ -5,8 +5,9 @@ services:
     restart: unless-stopped
     env_file: .env
     command: node psychologist.js
-    # volumes:
-    #   - ./logs/psychologist:/app/logs
+    volumes:
+        - ./data/psychologist:/app/data  # Монтируем том для памяти психолога
+    #   - ./logs/psychologist:/app/logs  # Если нужны логи
 
   sexologist:
     build: .
@@ -14,5 +15,6 @@ services:
     restart: unless-stopped
     env_file: .env
     command: node sexologist.js
-    # volumes:
-    #   - ./logs/sexologist:/app/logs
+    volumes:
+        - ./data/sexologist:/app/data    # Монтируем том для памяти сексолога
+    #   - ./logs/sexologist:/app/logs    # Если нужны логи
